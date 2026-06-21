@@ -1,10 +1,9 @@
-// api/get-result.js (الكود النهائي الفعلي لجلب النتيجة عبر Handshake الأزهر الثنائي)
+// api/get-result.js (نسخة جلب النتيجة مع الحفاظ على الكوكيز والـ Session)
 
 const axios = require('axios');
 const https = require('https');
 
 module.exports = async (req, res) => {
-  // تفعيل الـ CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -13,9 +12,9 @@ module.exports = async (req, res) => {
     return res.status(200).end();
   }
 
-  const { seat_no } = req.query; // يمثل الرقم القومي المدخل
+  const { seat_no } = req.query; // يمثل الرقم القومي
   if (!seat_no) {
-    return res.status(400).json({ error: 'يرجى إرسال الرقم القومي' });
+    return res.status(400).json({ error: 'يرجى إرسال الرقم المطلوب' });
   }
 
   const agent = new https.Agent({  
@@ -25,7 +24,7 @@ module.exports = async (req, res) => {
   try {
     const mainUrl = `https://natiga.azhar.eg/`;
 
-    // 1. جلب الصفحة الرئيسية لقراءة الـ data-page (الـ pageKey)
+    // 1. جلب الصفحة الرئيسية لقراءة الـ data-page والـ Cookies الخاصة بالجلسة
     const mainResponse = await axios.get(mainUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -37,19 +36,23 @@ module.exports = async (req, res) => {
 
     const html = mainResponse.data;
     
-    // استخراج الـ data-page من وسم الـ <body> باستخدام Regex
+    // استخراج الكوكيز المستلمة من السيرفر (مثل ASP.NET_SessionId) للحفاظ على الجلسة
+    const rawCookies = mainResponse.headers['set-cookie'];
+    const cookieHeader = rawCookies ? rawCookies.map(c => c.split(';')[0]).join('; ') : '';
+    
+    console.log(`تم التقاط الكوكيز بنجاح: ${cookieHeader}`);
+
+    // استخراج الـ data-page من وسم الـ <body>
     const bodyMatch = /<body[^>]*data-page=["']([^"']*)["']/i.exec(html);
     const pageKey = bodyMatch ? bodyMatch[1] : '';
 
     if (!pageKey) {
       return res.status(500).json({ 
-        error: 'لم نتمكن من استخراج مفتاح الصفحة (pageKey) من بوابة الأزهر.' 
+        error: 'لم نتمكن من استخراج مفتاح الصفحة (pageKey).' 
       });
     }
 
-    console.log(`تم استخراج الـ pageKey بنجاح: ${pageKey}`);
-
-    // 2. طلب الحصول على التذكرة (InitRequest)
+    // 2. طلب الحصول على التذكرة (InitRequest) مع تمرير الكوكيز وهيدر الـ XML
     const initUrl = `https://natiga.azhar.eg/result.asmx/InitRequest`;
     const initResponse = await axios.post(
       initUrl,
@@ -57,8 +60,10 @@ module.exports = async (req, res) => {
       {
         headers: {
           'Content-Type': 'application/json; charset=utf-8',
+          'X-Requested-With': 'XMLHttpRequest',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-          'Referer': 'https://natiga.azhar.eg/'
+          'Referer': 'https://natiga.azhar.eg/',
+          'Cookie': cookieHeader // الحفاظ على الجلسة
         },
         httpsAgent: agent,
         timeout: 10000
@@ -66,19 +71,18 @@ module.exports = async (req, res) => {
     );
 
     const ticketData = initResponse.data;
-    // استخراج التذكرة من رد الـ ASMX
     const ticket = ticketData && ticketData.d && ticketData.d.Ticket ? ticketData.d.Ticket : null;
 
     if (!ticket) {
       return res.status(500).json({
-        error: 'فشل الحصول على تذكرة الاستعلام (Request Ticket) من خادم الأزهر.',
+        error: 'فشل الحصول على تذكرة الاستعلام من خادم الأزهر.',
         details: JSON.stringify(ticketData)
       });
     }
 
-    console.log(`تم الحصول على التذكرة بنجاح: ${ticket}`);
+    console.log(`تم استلام تذكرة الأمان: ${ticket}`);
 
-    // 3. طلب النتيجة الفعلي (GetResultByNationalId)
+    // 3. طلب النتيجة الفعلي (GetResultByNationalId) مع الكوكيز والتذكرة وهيدر الـ XML
     const resultUrl = `https://natiga.azhar.eg/result.asmx/GetResultByNationalId`;
     const resultResponse = await axios.post(
       resultUrl,
@@ -92,7 +96,8 @@ module.exports = async (req, res) => {
           'Content-Type': 'application/json; charset=utf-8',
           'X-Requested-With': 'XMLHttpRequest',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-          'Referer': 'https://natiga.azhar.eg/'
+          'Referer': 'https://natiga.azhar.eg/',
+          'Cookie': cookieHeader // الحفاظ على الجلسة الموثقة
         },
         httpsAgent: agent,
         timeout: 15000
@@ -101,17 +106,24 @@ module.exports = async (req, res) => {
 
     const resultData = resultResponse.data;
 
-    // إرجاع النتيجة الخام للفرونت إند لمعاينتها
+    // إرجاع النتيجة للفرونت إند بنجاح!
     return res.status(200).json({
       success: true,
       originalResult: resultData
     });
 
   } catch (error) {
-    console.error("خطأ الاتصال المباشر بالأزهر:", error.message);
+    console.error("خطأ الاتصال بالأزهر:", error.message);
+    
+    // جلب رد السيرفر الفعلي إن وجد لزيادة التفاصيل والدقة
+    let serverResponse = error.message;
+    if (error.response && error.response.data) {
+      serverResponse += " - رد السيرفر: " + JSON.stringify(error.response.data);
+    }
+
     return res.status(500).json({
       error: 'فشل استرجاع النتيجة من خوادم الأزهر',
-      details: error.message
+      details: serverResponse
     });
   }
-}; 
+};
