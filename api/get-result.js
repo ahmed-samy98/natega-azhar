@@ -1,59 +1,63 @@
-// api/get-result.js (تحديث لتخطي فحص SSL وطباعة تفاصيل الخطأ)
+// api/get-result.js (باستخدام نفس أسلوبك الناجح بـ Axios)
 
-// إيقاف رفض الاتصال بسبب شهادات الأمان غير الموثقة حكومياً
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+const axios = require('axios');
+const https = require('https');
 
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Credentials', true);
+module.exports = async (req, res) => {
+  // تفعيل الـ Headers الخاصة بـ CORS لتجنب أي مشاكل اتصال
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  const { seat_no } = req.query;
-
+  const { seat_no } = req.query; // يمثل رقم الجلوس أو الرقم القومي المدخل
   if (!seat_no) {
-    return res.status(400).json({ error: "الرجاء إدخال الرقم المطلوب" });
+    return res.status(400).json({ error: 'يرجى إرسال رقم الجلوس أو الرقم القومي' });
   }
 
-  const AZHAR_TARGET_URL = `https://natiga.azhar.eg/`; 
+  // إعداد وكيل الاتصال (Agent) لتجاهل أخطاء شهادات الأمان الحكومية غير الموثقة
+  const agent = new https.Agent({  
+    rejectUnauthorized: false
+  });
 
   try {
-    console.log(`محاولة الاتصال لتخطي SSL للرقم: ${seat_no}`);
+    const targetUrl = `https://natiga.azhar.eg/`; 
 
-    const response = await fetch(AZHAR_TARGET_URL, {
-      method: 'POST',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-        'Referer': 'https://natiga.azhar.eg/',
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      body: `seat_no=${seat_no}&national_id=${seat_no}`,
-      signal: AbortSignal.timeout(9000) 
-    });
+    // محاكاة الطلب بنفس طريقتك الناجحة مع إرسال البيانات كـ POST 
+    // وإضافة الـ headers المطبقة بمشروعك وموقع الأزهر
+    const response = await axios.post(targetUrl, 
+      `seat_no=${encodeURIComponent(seat_no)}&national_id=${encodeURIComponent(seat_no)}`, 
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': 'https://natiga.azhar.eg/',
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        httpsAgent: agent, // تطبيق تجاوز فحص الـ SSL
+        timeout: 12000     // مهلة 12 ثانية للرد بسبب الضغط المتوقع
+      }
+    );
 
-    const responseText = await response.text();
-    console.log("استجابة ناجحة وتخطي الـ SSL!");
+    // طباعة الاستجابة في الـ Console لمعاينتها في Logs بـ Vercel
+    console.log("تم الاتصال بنجاح بموقع الأزهر!");
+    const responseData = response.data;
 
+    // بما أن موقع الأزهر يعيد صفحة ويب (HTML) وليس JSON كالدقهلية،
+    // سنقوم بإرجاع الـ HTML مؤقتاً لنرى هل تم العبور بنجاح أم لا
     return res.status(200).json({
       success: true,
-      message: "تم الاتصال بنجاح وتخطي الـ SSL",
-      data: responseText.substring(0, 500)
+      isHtml: true,
+      html_preview: typeof responseData === 'string' ? responseData.substring(0, 800) : "استجابة غير نصية"
     });
 
   } catch (error) {
-    // طباعة تفاصيل الخطأ الدقيق (السبب) لمعرفة هل تم الرفض من جدار الحماية أم لا
-    console.error("الخطأ بالتفصيل:");
-    console.error(error.message);
-    if (error.cause) {
-      console.error("السبب الجذري للخطأ (Cause):", error.cause);
-    }
-    
-    return res.status(500).json({ 
-      error: `تعذر الاتصال بالبوابة الرسمية للأزهر. السبب: ${error.message}` 
+    console.error("تفاصيل الخطأ في Vercel:", error.message);
+    return res.status(500).json({
+      error: 'حدث خطأ أثناء الاتصال بسيرفر الأزهر الشريف مباشر',
+      details: error.message
     });
   }
-}
+};
