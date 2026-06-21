@@ -1,10 +1,9 @@
-// api/get-result.js (نسخة جلب وتحليل صفحة الأزهر باستخدام التعبيرات النمطية Regex بدون مكتبات خارجية)
+// api/get-result.js (المحلل الجراحي الدقيق لكود الجافاسكريبت خلف كواليس الأزهر)
 
 const axios = require('axios');
 const https = require('https');
 
 module.exports = async (req, res) => {
-  // تفعيل هيدرز CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -13,14 +12,11 @@ module.exports = async (req, res) => {
     return res.status(200).end();
   }
 
-  const { seat_no } = req.query;
-
   const agent = new https.Agent({  
     rejectUnauthorized: false
   });
 
   try {
-    console.log("محاولة جلب وتحليل كود صفحة الأزهر...");
     const targetUrl = `https://natiga.azhar.eg/`; 
 
     const response = await axios.get(targetUrl, {
@@ -34,70 +30,39 @@ module.exports = async (req, res) => {
 
     const html = response.data;
 
-    // 1. استخراج الـ Forms باستخدام Regex
-    const forms = [];
-    const formRegex = /<form[^>]*([\s\S]*?)<\/form>/gi;
-    const actionRegex = /action=["']([^"']*)["']/i;
-    const methodRegex = /method=["']([^"']*)["']/i;
-    const idRegex = /id=["']([^"']*)["']/i;
-
+    // البحث الجراحي عن أي سكريبت يحتوي على الكلمة txtNationalId
+    const scriptRegex = /<script\b[^>]*>([\s\S]*?)<\/script>/gi;
     let match;
-    while ((match = formRegex.exec(html)) !== null) {
-      const formTag = match[0];
-      const actionMatch = actionRegex.exec(formTag);
-      const methodMatch = methodRegex.exec(formTag);
-      const idMatch = idRegex.exec(formTag);
+    const foundScripts = [];
 
-      forms.push({
-        action: actionMatch ? actionMatch[1] : 'لا يوجد',
-        method: methodMatch ? methodMatch[1] : 'GET',
-        id: idMatch ? idMatch[1] : 'لا يوجد'
-      });
+    while ((match = scriptRegex.exec(html)) !== null) {
+      const scriptContent = match[1];
+      if (scriptContent.includes('txtNationalId')) {
+        foundScripts.push(scriptContent.trim());
+      }
     }
 
-    // 2. استخراج الـ Inputs باستخدام Regex
-    const inputs = [];
-    const inputRegex = /<input[^>]*>/gi;
-    const nameRegex = /name=["']([^"']*)["']/i;
-    const inputIdRegex = /id=["']([^"']*)["']/i;
-    const typeRegex = /type=["']([^"']*)["']/i;
-
-    let inputMatch;
-    while ((inputMatch = inputRegex.exec(html)) !== null) {
-      const inputTag = inputMatch[0];
-      const nameMatch = nameRegex.exec(inputTag);
-      const idMatch = inputIdRegex.exec(inputTag);
-      const typeMatch = typeRegex.exec(inputTag);
-
-      inputs.push({
-        name: nameMatch ? nameMatch[1] : 'لا يوجد',
-        id: idMatch ? idMatch[1] : 'لا يوجد',
-        type: typeMatch ? typeMatch[1] : 'text'
-      });
+    // البحث عن أي طلبات AJAX أخرى في الأكواد المضمنة لزيادة الدقة
+    const ajaxScripts = [];
+    scriptRegex.lastIndex = 0; // إعادة تصفير مؤشر البحث
+    while ((match = scriptRegex.exec(html)) !== null) {
+      const scriptContent = match[1];
+      if (scriptContent.includes('$.ajax') || scriptContent.includes('$.post') || scriptContent.includes('fetch(') || scriptContent.includes('url:')) {
+        ajaxScripts.push(scriptContent.trim().substring(0, 1000));
+      }
     }
 
-    // 3. استخراج روابط الـ Scripts باستخدام Regex
-    const scripts = [];
-    const scriptRegex = /<script[^>]*src=["']([^"']*)["']/gi;
-    let scriptMatch;
-    while ((scriptMatch = scriptRegex.exec(html)) !== null) {
-      scripts.push(scriptMatch[1]);
-    }
-
-    // إرسال التقرير النهائي للفرونت إند
     return res.status(200).json({
       success: true,
-      audited: true,
-      forms: forms,
-      inputs: inputs,
-      scripts: scripts
+      auditedScripts: true,
+      foundScripts: foundScripts,
+      ajaxScripts: ajaxScripts
     });
 
   } catch (error) {
-    console.error("خطأ الاتصال:", error.message);
     return res.status(500).json({
-      error: 'فشل جلب صفحة الأزهر الرسمية',
+      error: 'فشل فحص الجافاسكريبت للأزهر',
       details: error.message
     });
   }
-}; 
+};
