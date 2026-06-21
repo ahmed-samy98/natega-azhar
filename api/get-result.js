@@ -1,10 +1,10 @@
-// api/get-result.js (المحلل البرمجي الذكي لكود صفحة الأزهر)
+// api/get-result.js (نسخة جلب وتحليل صفحة الأزهر باستخدام التعبيرات النمطية Regex بدون مكتبات خارجية)
 
 const axios = require('axios');
 const https = require('https');
-const cheerio = require('cheerio'); // سنستخدم المكتبة التي أضفتها أنت بالفولدر
 
 module.exports = async (req, res) => {
+  // تفعيل هيدرز CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -13,11 +13,14 @@ module.exports = async (req, res) => {
     return res.status(200).end();
   }
 
+  const { seat_no } = req.query;
+
   const agent = new https.Agent({  
     rejectUnauthorized: false
   });
 
   try {
+    console.log("محاولة جلب وتحليل كود صفحة الأزهر...");
     const targetUrl = `https://natiga.azhar.eg/`; 
 
     const response = await axios.get(targetUrl, {
@@ -30,36 +33,58 @@ module.exports = async (req, res) => {
     });
 
     const html = response.data;
-    const $ = cheerio.load(html);
 
-    // 1. استخراج جميع النماذج (Forms)
+    // 1. استخراج الـ Forms باستخدام Regex
     const forms = [];
-    $('form').each((i, el) => {
+    const formRegex = /<form[^>]*([\s\S]*?)<\/form>/gi;
+    const actionRegex = /action=["']([^"']*)["']/i;
+    const methodRegex = /method=["']([^"']*)["']/i;
+    const idRegex = /id=["']([^"']*)["']/i;
+
+    let match;
+    while ((match = formRegex.exec(html)) !== null) {
+      const formTag = match[0];
+      const actionMatch = actionRegex.exec(formTag);
+      const methodMatch = methodRegex.exec(formTag);
+      const idMatch = idRegex.exec(formTag);
+
       forms.push({
-        action: $(el).attr('action') || 'لا يوجد',
-        method: $(el).attr('method') || 'GET',
-        id: $(el).attr('id') || 'لا يوجد'
+        action: actionMatch ? actionMatch[1] : 'لا يوجد',
+        method: methodMatch ? methodMatch[1] : 'GET',
+        id: idMatch ? idMatch[1] : 'لا يوجد'
       });
-    });
+    }
 
-    // 2. استخراج جميع حقول الإدخال (Inputs)
+    // 2. استخراج الـ Inputs باستخدام Regex
     const inputs = [];
-    $('input').each((i, el) => {
+    const inputRegex = /<input[^>]*>/gi;
+    const nameRegex = /name=["']([^"']*)["']/i;
+    const inputIdRegex = /id=["']([^"']*)["']/i;
+    const typeRegex = /type=["']([^"']*)["']/i;
+
+    let inputMatch;
+    while ((inputMatch = inputRegex.exec(html)) !== null) {
+      const inputTag = inputMatch[0];
+      const nameMatch = nameRegex.exec(inputTag);
+      const idMatch = inputIdRegex.exec(inputTag);
+      const typeMatch = typeRegex.exec(inputTag);
+
       inputs.push({
-        name: $(el).attr('name') || 'لا يوجد',
-        id: $(el).attr('id') || 'لا يوجد',
-        type: $(el).attr('type') || 'text'
+        name: nameMatch ? nameMatch[1] : 'لا يوجد',
+        id: idMatch ? idMatch[1] : 'لا يوجد',
+        type: typeMatch ? typeMatch[1] : 'text'
       });
-    });
+    }
 
-    // 3. استخراج روابط ملفات السكريبت (Scripts)
+    // 3. استخراج روابط الـ Scripts باستخدام Regex
     const scripts = [];
-    $('script').each((i, el) => {
-      const src = $(el).attr('src');
-      if (src) scripts.push(src);
-    });
+    const scriptRegex = /<script[^>]*src=["']([^"']*)["']/gi;
+    let scriptMatch;
+    while ((scriptMatch = scriptRegex.exec(html)) !== null) {
+      scripts.push(scriptMatch[1]);
+    }
 
-    // إرسال التقرير النهائي المنظم
+    // إرسال التقرير النهائي للفرونت إند
     return res.status(200).json({
       success: true,
       audited: true,
@@ -69,8 +94,9 @@ module.exports = async (req, res) => {
     });
 
   } catch (error) {
+    console.error("خطأ الاتصال:", error.message);
     return res.status(500).json({
-      error: 'فشل تحليل صفحة الأزهر',
+      error: 'فشل جلب صفحة الأزهر الرسمية',
       details: error.message
     });
   }
